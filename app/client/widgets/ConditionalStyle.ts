@@ -9,12 +9,15 @@ import {buildHighlightedCode} from 'app/client/ui/CodeHighlight';
 import {cssFieldFormula} from 'app/client/ui/RightPanelStyles';
 import {withInfoTooltip} from 'app/client/ui/tooltips';
 import {textButton} from 'app/client/ui2018/buttons';
-import {ColorOption, colorSelect} from 'app/client/ui2018/ColorSelect';
+import {themeAdaptiveColorSelect} from 'app/client/ui2018/ThemeAdaptiveColorSelect';
+import {gristThemeObs} from 'app/client/ui2018/theme';
 import {theme, vars} from 'app/client/ui2018/cssVars';
 import {cssDragger} from 'app/client/ui2018/draggableList';
 import {icon} from 'app/client/ui2018/icons';
 import {setupEditorCleanup} from 'app/client/widgets/FieldEditor';
 import {cssError, openFormulaEditor} from 'app/client/widgets/FormulaEditor';
+import {colorStorage} from 'app/client/lib/colors/ColorStorage';
+import {ThemeAdaptiveColorConfig} from 'app/client/lib/colors/types';
 import {isRaisedException, isValidRuleValue} from 'app/common/gristTypes';
 import {GristObjCode, RowRecord} from 'app/plugin/GristData';
 import {decodeObject} from 'app/plugin/objtypes';
@@ -36,6 +39,10 @@ export class ConditionalStyle extends Disposable {
     const rulesCols = use(this._ruleOwner.rulesCols);
     return rulesCols.map((col, i) => [col, i]);
   });
+  // Current theme for theme-adaptive colors
+  private _currentTheme: Computed<'light' | 'dark'> = Computed.create(this, gristThemeObs(), (_use, themeObj) =>
+    themeObj.appearance as 'light' | 'dark'
+  );
 
   constructor(
     private _label: string,
@@ -119,12 +126,21 @@ export class ConditionalStyle extends Disposable {
 
   private _buildRule(owner: Disposable, rule: ColumnRecAndIndex) {
     const [column, index] = rule;
+
+    // Get both legacy color observables and new config observables
     const textColor = this._buildStyleOption(owner, index, 'textColor');
     const fillColor = this._buildStyleOption(owner, index, 'fillColor');
+    const textColorConfig = this._buildStyleOption(owner, index, 'textColorConfig');
+    const fillColorConfig = this._buildStyleOption(owner, index, 'fillColorConfig');
     const fontBold = this._buildStyleOption(owner, index, 'fontBold');
     const fontItalic = this._buildStyleOption(owner, index, 'fontItalic');
     const fontUnderline = this._buildStyleOption(owner, index, 'fontUnderline');
     const fontStrikethrough = this._buildStyleOption(owner, index, 'fontStrikethrough');
+
+    // Migrate legacy colors to configs if needed
+    this._ensureConfigMigration(owner, textColor, textColorConfig, this._currentTheme);
+    this._ensureConfigMigration(owner, fillColor, fillColorConfig, this._currentTheme);
+
     const save = async () => {
       // This will save both options.
       await this._ruleOwner.rulesStyles.save();
@@ -158,17 +174,19 @@ export class ConditionalStyle extends Disposable {
             dom.show(hasError),
             testId(`rule-error-${index}`),
           ),
-          colorSelect(
+          themeAdaptiveColorSelect(
             {
-              textColor: new ColorOption({color:textColor, allowsNone: true, noneText: 'default'}),
-              fillColor: new ColorOption({color:fillColor, allowsNone: true, noneText: 'none'}),
+              textConfig: textColorConfig as Observable<ThemeAdaptiveColorConfig | undefined>,
+              fillConfig: fillColorConfig as Observable<ThemeAdaptiveColorConfig | undefined>,
               fontBold,
               fontItalic,
               fontUnderline,
               fontStrikethrough
-            }, {
+            },
+            {
               onSave: save,
               placeholder: this._label || t('Conditional Style'),
+              currentTheme: this._currentTheme
             }
           )
         ),
@@ -251,6 +269,31 @@ export class ConditionalStyle extends Disposable {
         this._gristDoc.fieldEditorHolder.autoDispose(editorHolder);
       })
     );
+  }
+
+  /**
+   * Ensures legacy color strings are migrated to ThemeAdaptiveColorConfig.
+   * If a config doesn't exist but a legacy color does, create an auto config.
+   */
+  private _ensureConfigMigration(
+    owner: Disposable,
+    legacyColorObs: Observable<string | undefined>,
+    configObs: Observable<ThemeAdaptiveColorConfig | undefined>,
+    currentTheme: Computed<'light' | 'dark'>
+  ): void {
+    owner.autoDispose(legacyColorObs.addListener((legacyColor) => {
+      // Only migrate if we have a legacy color but no config
+      if (legacyColor && !configObs.get()) {
+        const theme = currentTheme.get();
+        try {
+          const config = colorStorage.createAutoConfig(legacyColor, theme);
+          configObs.set(config);
+        } catch (e) {
+          // Invalid color, skip migration
+          console.warn('Failed to migrate legacy conditional style color:', legacyColor, e);
+        }
+      }
+    }));
   }
 }
 

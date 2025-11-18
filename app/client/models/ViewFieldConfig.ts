@@ -215,8 +215,8 @@ export class ViewFieldConfig {
           // First get all widgetOption jsons from all columns/fields.
           const optionList = fields.map(f => f.widgetOptionsJson());
           // And fill only those that are common
-          for(const key of ['textColor', 'fillColor', 'fontBold',
-                            'fontItalic', 'fontUnderline', 'fontStrikethrough']) {
+          for(const key of ['textColor', 'fillColor', 'textColorConfig', 'fillColorConfig',
+                            'fontBold', 'fontItalic', 'fontUnderline', 'fontStrikethrough']) {
             // Setting null means that this options is there, but has no value.
             result[key] = null;
             // If all columns have the same value, use it.
@@ -277,8 +277,8 @@ export class ViewFieldConfig {
           // First get all widgetOption jsons from all columns/fields.
           const optionList = fields.map(f => f.widgetOptionsJson());
           // And fill only those that are common
-          for(const key of ['headerTextColor', 'headerFillColor', 'headerFontBold',
-                            'headerFontItalic', 'headerFontUnderline', 'headerFontStrikethrough']) {
+          for(const key of ['headerTextColor', 'headerFillColor', 'headerTextColorConfig', 'headerFillColorConfig',
+                            'headerFontBold', 'headerFontItalic', 'headerFontUnderline', 'headerFontStrikethrough']) {
             // Setting null means that this options is there, but has no value.
             result[key] = null;
             // If all columns have the same value, use it.

@@ -17,6 +17,15 @@ import {DataRowModel} from 'app/client/models/DataRowModel';
 import {ColumnRec, DocModel, ViewFieldRec} from 'app/client/models/DocModel';
 import {SaveableObjObservable, setSaveValue} from 'app/client/models/modelUtil';
 import {CombinedStyle, Style} from 'app/client/models/Styles';
+import {themeAdaptiveColor} from 'app/client/lib/colors/ThemeAdaptiveColor';
+import {gristThemeObs} from 'app/client/ui2018/theme';
+
+// Create a Knockout observable that bridges to the Grainjs theme observable
+// This allows Knockout computeds to react to theme changes
+const koThemeAppearance = ko.observable<'light' | 'dark'>(gristThemeObs().get().appearance as 'light' | 'dark');
+gristThemeObs().addListener((theme) => {
+  koThemeAppearance(theme.appearance as 'light' | 'dark');
+});
 import {FieldSettingsMenu} from 'app/client/ui/FieldMenus';
 import {cssBlockedCursor, cssLabel, cssRow} from 'app/client/ui/RightPanelStyles';
 import {textButton} from 'app/client/ui2018/buttons';
@@ -87,7 +96,11 @@ function buildFontOptions(
   return koUtil.withKoUtils(ko.computed(() => {
     if (builder.isDisposed()) { return false; }
     const style = computedRule()?.style;
-    const styleFlag = style?.[optionName] || builder.field[optionName]();
+    // Only access field properties that exist on ViewFieldRec (font and legacy color properties)
+    const fieldValue = (optionName in builder.field && typeof (builder.field as any)[optionName] === 'function')
+      ? (builder.field as any)[optionName]()
+      : undefined;
+    const styleFlag = style?.[optionName] || fieldValue;
     return styleFlag;
   })).onlyNotifyUnequal();
 }
@@ -663,12 +676,27 @@ export class FieldBuilder extends Disposable {
 
     const ruleText = koUtil.withKoUtils(ko.computed(() => {
       if (this.isDisposed()) { return null; }
-      return computedRule()?.style?.textColor || '';
+      const rule = computedRule();
+      if (!rule || !rule.style) { return ''; }
+      // Check for theme-adaptive config first
+      if (rule.style.textColorConfig) {
+        const currentTheme = koThemeAppearance();  // This makes the computed reactive to theme changes
+        return themeAdaptiveColor.resolveColor(rule.style.textColorConfig, 'text', currentTheme) || '';
+      }
+      return rule.style.textColor || '';
     })).onlyNotifyUnequal();
 
     const ruleFill = koUtil.withKoUtils(ko.computed(() => {
       if (this.isDisposed()) { return null; }
-      return notTransparent(computedRule()?.style?.fillColor || '');
+      const rule = computedRule();
+      if (!rule || !rule.style) { return null; }
+      // Check for theme-adaptive config first
+      if (rule.style.fillColorConfig) {
+        const currentTheme = koThemeAppearance();  // This makes the computed reactive to theme changes
+        const color = themeAdaptiveColor.resolveColor(rule.style.fillColorConfig, 'fill', currentTheme);
+        return notTransparent(color || '');
+      }
+      return notTransparent(rule.style.fillColor || '');
     })).onlyNotifyUnequal();
 
     const fontBold = buildFontOptions(this, computedRule, 'fontBold');

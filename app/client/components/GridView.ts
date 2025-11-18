@@ -27,7 +27,16 @@ import {NEW_FILTER_JSON} from 'app/client/models/ColumnFilter';
 import {DataRowModel} from 'app/client/models/DataRowModel';
 import {CombinedStyle} from 'app/client/models/Styles';
 import {ViewFieldRec} from 'app/client/models/entities/ViewFieldRec';
+import {themeAdaptiveColor} from 'app/client/lib/colors/ThemeAdaptiveColor';
+import {gristThemeObs} from 'app/client/ui2018/theme';
 import {ColInfo, NewColInfo, ViewSectionRec} from 'app/client/models/entities/ViewSectionRec';
+
+// Create a Knockout observable that bridges to the Grainjs theme observable
+// This allows Knockout computeds to react to theme changes
+const koThemeAppearance = ko.observable<'light' | 'dark'>(gristThemeObs().get().appearance as 'light' | 'dark');
+gristThemeObs().addListener((theme) => {
+  koThemeAppearance(theme.appearance as 'light' | 'dark');
+});
 import {reportWarning} from 'app/client/models/errors';
 import {CellContextMenu, ICellContextMenu} from 'app/client/ui/CellContextMenu';
 import {IColumnFilterMenuOptions} from 'app/client/ui/ColumnFilterMenu';
@@ -2272,6 +2281,17 @@ function buildStyleOption<Name extends keyof CombinedStyle, T>(
     if (owner.isDisposed()) { return defValue; }
     const rule = computedRule();
     if (!rule || !rule.style) { return defValue; }
+
+    // For color fields, check if there's a theme-adaptive config
+    if (optionName === 'textColor' && rule.style.textColorConfig) {
+      const currentTheme = koThemeAppearance();  // This makes the computed reactive to theme changes
+      return themeAdaptiveColor.resolveColor(rule.style.textColorConfig, 'text', currentTheme) as any || defValue;
+    }
+    if (optionName === 'fillColor' && rule.style.fillColorConfig) {
+      const currentTheme = koThemeAppearance();  // This makes the computed reactive to theme changes
+      return themeAdaptiveColor.resolveColor(rule.style.fillColorConfig, 'fill', currentTheme) as any || defValue;
+    }
+
     return (rule.style[optionName] as Exclude<CombinedStyle[Name], undefined>) || defValue;
   });
 }
