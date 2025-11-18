@@ -155,10 +155,12 @@ class TestGenCode(unittest.TestCase):
       self.assertEqual(ident.lower(), identifiers.pick_col_ident(label.lower()))
 
     # Actual example table name from a user
-    # unicodedata.normalize can separate accents but doesn't help with Đ
+    # With Unicode support, we now preserve Latin Extended characters like Đ
+    # Old behavior: "Bảng_Đặc_Thù" -> "Bang__ac_Thu" (Đ was removed)
+    # New behavior: Preserve Đ since it's a valid Latin letter
     check(
       u"Bảng_Đặc_Thù",
-      u"Bang__ac_Thu",
+      u"Bang_Đac_Thu",
     )
 
     check(
@@ -215,6 +217,58 @@ class TestGenCode(unittest.TestCase):
     for i in range(730):
       large_set.add(identifiers._gen_ident(large_set))
     self.assertEqual(identifiers.pick_col_ident("", avoid=large_set), "ABC")
+
+  def test_ident_chinese_support(self):
+    """Test support for Chinese, Japanese, Korean, and other Unicode characters"""
+
+    # Traditional Chinese
+    self.assertEqual(identifiers.pick_col_ident(u"繁體中文"), u"繁體中文")
+    self.assertEqual(identifiers.pick_col_ident(u"繁體@A"), u"繁體_A")
+    self.assertEqual(identifiers.pick_col_ident(u"用戶名稱"), u"用戶名稱")
+    self.assertEqual(identifiers.pick_col_ident(u"測試@123"), u"測試_123")
+
+    # Simplified Chinese
+    self.assertEqual(identifiers.pick_col_ident(u"简体中文"), u"简体中文")
+    self.assertEqual(identifiers.pick_col_ident(u"用户@ID"), u"用户_ID")
+
+    # Japanese (Hiragana, Katakana, Kanji)
+    self.assertEqual(identifiers.pick_col_ident(u"ユーザー名"), u"ユーザー名")
+    self.assertEqual(identifiers.pick_col_ident(u"名前@ID"), u"名前_ID")
+    self.assertEqual(identifiers.pick_col_ident(u"テスト"), u"テスト")
+
+    # Korean
+    self.assertEqual(identifiers.pick_col_ident(u"사용자"), u"사용자")
+    self.assertEqual(identifiers.pick_col_ident(u"이름@ID"), u"이름_ID")
+
+    # Mixed languages
+    self.assertEqual(identifiers.pick_col_ident(u"User用戶"), u"User用戶")
+    self.assertEqual(identifiers.pick_col_ident(u"ID@身份證"), u"ID_身份證")
+
+    # Special characters still replaced
+    self.assertEqual(identifiers.pick_col_ident(u"中文!@#標題"), u"中文___標題")
+
+    # Pure special characters still fall back to auto ID
+    self.assertEqual(identifiers.pick_col_ident(u"@#$%"), "A")
+
+    # Number prefix still works
+    self.assertEqual(identifiers.pick_col_ident(u"123中文"), u"c123中文")
+
+    # Conflict avoidance
+    self.assertEqual(identifiers.pick_col_ident(u"測試", avoid={u"測試"}), u"測試2")
+    self.assertEqual(identifiers.pick_col_ident(u"測試", avoid={u"測試", u"測試2"}), u"測試3")
+
+    # Table identifiers with Chinese
+    self.assertEqual(identifiers.pick_table_ident(u"用戶表"), u"用戶表")
+    self.assertEqual(identifiers.pick_table_ident(u"數據@表"), u"數據_表")
+
+  def test_ident_fullwidth_characters(self):
+    """Test fullwidth (double-byte) characters"""
+    # Fullwidth numbers are Unicode Nd category, should be preserved
+    self.assertEqual(identifiers.pick_col_ident(u"測試１２３"), u"測試１２３")
+
+    # Fullwidth letters (these are in L* category)
+    self.assertEqual(identifiers.pick_col_ident(u"ＡＢＣＤ"), u"ＡＢＣＤ")
+    self.assertEqual(identifiers.pick_col_ident(u"ａｂｃｄ"), u"ａｂｃｄ")
 
   def test_pick_table_ident(self):
     self.assertEqual(identifiers.pick_table_ident("123asdf"), "T123asdf")

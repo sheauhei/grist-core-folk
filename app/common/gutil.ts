@@ -693,22 +693,69 @@ const _kwlist = ['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await
                  'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
                  'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal',
                  'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield'];
+
+/**
+ * Check if a character is a valid identifier character.
+ * Allows Unicode letters (including CJK), decimal numbers, and underscore.
+ */
+function isValidIdentChar(char: string): boolean {
+  if (char === '_') { return true; }
+  // \p{L} = all Unicode letters (including CJK)
+  // \p{Nd} = decimal numbers
+  return /^[\p{L}\p{Nd}]$/u.test(char);
+}
+
+/**
+ * Check if a character is in the Latin script (for accent removal).
+ */
+function isLatinChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  // Basic Latin + Latin-1 + Latin Extended A/B
+  if (code <= 0x024F) { return true; }
+  // Latin Extended Additional
+  if (code >= 0x1E00 && code <= 0x1EFF) { return true; }
+  return false;
+}
+
 /**
  * Given an arbitrary string, makes substitutions to make it a valid SQL/Python identifier.
- * Corresponds to sandbox/grist/gencode.sanitize_ident
+ * Corresponds to sandbox/grist/identifiers.py::_sanitize_ident
+ *
+ * Now supports Unicode characters including Chinese, Japanese, Korean, and other international
+ * alphabets (Python 3 PEP 3131).
  */
 export function sanitizeIdent(ident: string, prefix?: string) {
   prefix = prefix || 'c';
-  // Remove non-alphanumeric non-_ chars
-  ident = ident.replace(/[^a-zA-Z0-9_]+/g, '_');
-  // Remove leading and trailing _
-  ident = ident.replace(/^_+|_+$/g, '');
-  // Place prefix at front if the beginning isn't a number
-  ident = ident.replace(/^(?=[0-9])/g, prefix);
-  // Append prefix until it is not  python keyword
+
+  // Process character by character: remove accents from Latin, preserve CJK
+  const processedChars = Array.from(ident).map(char => {
+    if (isLatinChar(char)) {
+      // Normalize and remove combining marks for Latin characters
+      const normalized = char.normalize('NFD');
+      // Remove combining marks (accents): \p{Mn} = Nonspacing marks
+      return normalized.replace(/\p{Mn}/gu, '');
+    } else {
+      // For non-Latin (CJK, etc.), use NFC canonical form
+      return char.normalize('NFC');
+    }
+  }).join('');
+
+  // Replace invalid characters with underscore
+  const sanitized = Array.from(processedChars)
+    .map(c => isValidIdentChar(c) ? c : '_')
+    .join('');
+
+  // Remove leading and trailing underscores
+  ident = sanitized.replace(/^_+|_+$/g, '');
+
+  // Place prefix at front if the beginning is a number
+  ident = ident.replace(/^(?=[\p{Nd}])/u, prefix);
+
+  // Append prefix until it is not a Python keyword
   while (_kwlist.includes(ident)) {
     ident = prefix + ident;
   }
+
   return ident;
 }
 

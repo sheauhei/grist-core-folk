@@ -646,8 +646,12 @@ async function createBackupFile(filePath: string, versionNum: number): Promise<s
 
 /**
  * Validate and quote SQL identifiers such as table and column names.
+ * Now supports Unicode characters (including CJK) for international support.
  */
 export function quoteIdent(ident: string): string {
-  assert(/^[\w.]+$/.test(ident), `SQL identifier is not valid: ${ident}`);
+  // Allow Unicode letters, numbers, underscore, and dot
+  // \p{L} = Unicode letters (including CJK)
+  // \p{Nd} = Decimal numbers
+  assert(/^[\p{L}\p{Nd}_.]+$/u.test(ident), `SQL identifier is not valid: ${ident}`);
   return `"${ident}"`;
 }
