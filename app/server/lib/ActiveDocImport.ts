@@ -22,6 +22,8 @@ import {DocSession, OptDocSession} from 'app/server/lib/DocSession';
 import log from 'app/server/lib/log';
 import {globalUploadSet, moveUpload, UploadInfo} from 'app/server/lib/uploads';
 import {buildComparisonQuery} from 'app/server/lib/ExpandedQuery';
+import {ExcelFormulaParser} from 'app/common/ExcelFormulaParser';
+import {CellReferenceConverter} from 'app/common/CellReferenceConverter';
 import flatten = require('lodash/flatten');
 
 const IMPORT_TRANSFORM_COLUMN_PREFIX = 'gristHelper_Import_';
@@ -371,6 +373,102 @@ export class ActiveDocImport {
   }
 
   /**
+   * Process Excel formulas: detect formula columns and convert them to Grist formula syntax.
+   * This modifies the ParseFileResult in-place.
+   *
+   * @param tmpPath Path to the Excel file
+   * @param originalFilename Original filename
+   * @param optionsAndData ParseFileResult from Python parser
+   */
+  private async _processExcelFormulas(
+    tmpPath: string,
+    originalFilename: string,
+    optionsAndData: ParseFileResult
+  ): Promise<void> {
+    // Only process Excel files
+    const ext = path.extname(originalFilename).toLowerCase();
+    if (ext !== '.xlsx' && ext !== '.xlsm') {
+      return;
+    }
+
+    try {
+      log.info("ActiveDocImport._processExcelFormulas: Processing formulas in %s", originalFilename);
+
+      // Parse Excel file to detect formulas
+      const parser = new ExcelFormulaParser();
+      const excelSheets = await parser.parseFile(tmpPath);
+
+      // Process each table from Python parser
+      for (const gristTable of optionsAndData.tables) {
+        const tableName = gristTable.table_name || '';
+
+        // Find matching Excel sheet by name
+        const excelSheet = excelSheets.find(sheet => sheet.name === tableName);
+        if (!excelSheet) {
+          log.warn("ActiveDocImport._processExcelFormulas: No matching Excel sheet found for table %s", tableName);
+          continue;
+        }
+
+        if (excelSheet.formulaCount === 0) {
+          log.debug("ActiveDocImport._processExcelFormulas: No formulas found in sheet %s", tableName);
+          continue;
+        }
+
+        log.info("ActiveDocImport._processExcelFormulas: Found %d formula columns in sheet %s",
+                excelSheet.formulaCount, tableName);
+
+        // Create converter for this sheet
+        const converter = new CellReferenceConverter(excelSheet.columns, tableName);
+
+        // Process each column
+        for (let colIndex = 0; colIndex < gristTable.column_metadata.length; colIndex++) {
+          const gristColumn = gristTable.column_metadata[colIndex];
+          const columnId = gristColumn.id;
+
+          // Find matching Excel column by name
+          const excelColumn = excelSheet.columns.find(col => col.name === columnId);
+          if (!excelColumn) {
+            continue;
+          }
+
+          // Check if this column contains formulas
+          if (excelColumn.isFormula && excelColumn.exampleFormula) {
+            const conversionResult = converter.convertFormula(excelColumn.exampleFormula);
+
+            if (conversionResult.success) {
+              log.info("ActiveDocImport._processExcelFormulas: Converting formula column %s: %s → %s",
+                      columnId, excelColumn.exampleFormula, conversionResult.gristFormula);
+
+              // Set column as a formula column
+              gristColumn.type = 'Any';  // Let Grist infer type from formula result
+              (gristColumn as any).isFormula = true;  // Mark as formula column
+              (gristColumn as any).formula = conversionResult.gristFormula;
+
+              // Clear the data for this column (formulas will be calculated)
+              if (gristTable.table_data[colIndex]) {
+                const rowCount = gristTable.table_data[colIndex].length;
+                gristTable.table_data[colIndex] = new Array(rowCount).fill(null);
+              }
+
+              // Log warnings if any
+              if (conversionResult.warnings.length > 0) {
+                log.warn("ActiveDocImport._processExcelFormulas: Warnings for column %s: %s",
+                        columnId, conversionResult.warnings.join("; "));
+              }
+            } else {
+              log.error("ActiveDocImport._processExcelFormulas: Failed to convert formula for column %s: %s",
+                       columnId, conversionResult.warnings.join("; "));
+            }
+          }
+        }
+      }
+    } catch (error) {
+      log.error("ActiveDocImport._processExcelFormulas: Error processing Excel formulas: %s", error);
+      // Don't throw - let import continue without formulas
+    }
+  }
+
+  /**
    * Imports the data stored at tmpPath.
    *
    * Currently it starts a python parser as a child process
@@ -392,6 +490,10 @@ export class ActiveDocImport {
     }
     const optionsAndData: ParseFileResult =
       await this._activeDoc.docPluginManager.parseFile(tmpPath, originalFilename, parseOptions);
+
+    // Process Excel formulas if applicable
+    await this._processExcelFormulas(tmpPath, originalFilename, optionsAndData);
+
     return this.importParsedFileAsNewTable(docSession, optionsAndData, importOptions);
   }
 
